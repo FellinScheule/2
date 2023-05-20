@@ -1,0 +1,179 @@
+ 
+//testbench for mini_cpld
+ 
+module test;
+ 
+//64 bytes array used for cpld image
+reg [7:0] value[0:63];
+integer i,j,a,b,c;
+ 
+//signals used to load mini_cpld
+reg ldclk,ldi,lds;
+wire ldo;
+ 
+reg clk;
+ 
+//input pins of mini_cpld
+reg [3:0]ipin;
+ 
+//output pins of mini_cpld
+wire out_pin0;
+wire out_pin1;
+wire out_pin2;
+wire out_pin3;
+ 
+//instance of mini_cpld being tested
+mini_cpld mini_cpld_inst(
+    .ldclk(ldclk),
+    .ldi(ldi),
+    .ldo(ldo),
+    .lds(lds),
+ 
+    .clk(clk),
+    .in_pin(ipin),
+    .out_pin( {out_pin3,out_pin2,out_pin1,out_pin0} )
+);
+ 
+reg [3:0]num_bits;
+reg [3:0]val;
+ 
+initial
+begin
+    //load "cpld image" into temprorary array
+    $readmemb("image_shift.dat",value);
+    $display("mini_cpld image file");
+    for(i=0; i<64; i=i+1)
+        $display("%d %b",i,value[i]);
+ 
+    //create MIF file used by real Quartus II project for UFM init
+    make_mif();
+ 
+    //start with zeros
+    ldclk=0;
+    clk=0;
+    ldi=0;
+    lds=0;
+    ipin=0;
+ 
+    @(posedge ldclk);
+    lds=1;
+ 
+    //load image into cpld
+    i=0;
+    //low 4 bits mean loadable value
+    val = value[i] & 4'hF;
+    //high 4 bits mean number of bits to load
+    num_bits = value[i] >> 4;
+    while(num_bits != 0)
+    begin
+        //$display("load %d %4b %4b",i,num_bits,val);
+        sendbits();
+        i=i+1;
+        val = value[i] & 4'hF;
+        num_bits = value[i] >> 4;
+    end
+    lds=0;
+   
+    $display("load finished");
+ 
+    //simulate single input pin change
+    ipin[1]=1;
+    #30;
+    ipin[1]=0;
+    #35;
+    ipin[1]=1;
+    #50;
+    ipin[1]=0;
+    #70;
+    ipin[1]=1;
+    #30;
+    ipin[1]=0;
+    #10000;
+    $finish;
+end
+ 
+//task used to load several bits into mini_cpld
+task sendbits;
+begin
+    for(j=0; j<num_bits; j=j+1)
+    begin
+        ldi = val[3];
+        @(posedge ldclk)
+        #0;
+        val = val << 1;
+    end
+end
+endtask
+ 
+//generate Memory Initialization File (MIF) for
+//Altera MAX II CPLD User Flash Memory (UFM)
+integer acc;
+integer acc_num_bits;
+task make_mif;
+begin
+    $display("-------------------------");
+    $display("WIDTH = 16;");
+    $display("DEPTH = 512;");
+    $display("ADDRESS_RADIX = HEX;");
+    $display("DATA_RADIX = HEX;");
+    $display("CONTENT BEGIN");
+    $display("  00000000 : 00000000;");
+    $display("  00000001 : 00000000;");
+    $display("  00000002 : 00000000;");
+    $display("  00000003 : 00000000;");
+    a=4;    //next addr to emit
+    c=1;    //cycle flag
+    i=0;    //index of word in image memory
+    acc = 0;
+    acc_num_bits=0;
+    num_bits = 1;
+    while( (num_bits > 0) && (a<32) )
+    begin
+        //get word from memory
+        num_bits = value[i] >> 4;
+        val = (value[i] & 4'hF) >> (4-num_bits);
+        i=i+1;
+        //put bits into accumulator
+        acc = acc << num_bits;
+        acc = acc | val;
+        acc_num_bits = acc_num_bits + num_bits;
+        //$display(">%X %d;",acc,acc_num_bits);
+        if(acc_num_bits>15)
+        begin
+            b=acc>>(acc_num_bits-16);
+            $display("  %X : %X;",a,b & 16'hFFFF);
+            acc_num_bits = acc_num_bits-16;
+            a=a+1;
+        end
+    end
+    if(acc_num_bits>0)
+    begin
+        b=acc<<(16-acc_num_bits);
+        $display("  %X : %X;",a,b & 16'hFFFF);
+        a=a+1;
+    end
+    $display("  %X : %X;",a,0);
+    $display("END");
+    $display("-------------------------");
+end
+endtask
+ 
+//generate clock signal for image loading into mini_cpld
+always
+begin
+    #5 ldclk = ~ldclk;
+end
+ 
+//generate system clock signal
+always
+begin
+    #10 clk = ~clk;
+end
+ 
+initial
+begin
+    $dumpfile("out.vcd");
+    $dumpvars(0,test);
+end
+ 
+endmodule
